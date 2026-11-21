@@ -27,7 +27,7 @@ jobs:
             libcairo2-dev libgtk-3-dev libx11-dev libx11-xcb-dev libxcomposite-dev \
             libxdamage-dev libxext-dev libxfixes-dev libxcb-present-dev \
             pkg-config python3-cairo python3-gi python3-gi-cairo \
-            python3-pytest xvfb
+            python3-pytest rpm xvfb
 
       - name: Run tests
         run: xvfb-run -a python3 -m pytest -q
@@ -38,18 +38,66 @@ jobs:
       - name: Create source archive
         run: make dist
 
-      - name: Upload build artifact
+      - name: Build Debian and RPM packages
+        run: |
+          packaging/deb/build.sh
+          packaging/rpm/build.sh
+
+      - name: Upload Linux packages
         uses: actions/upload-artifact@v4
         with:
-          name: glitterDE-${{ github.sha }}
-          path: dist/glitterde-*.tar.gz
+          name: linux-packages-${{ github.sha }}
+          path: |
+            dist/glitterde-*.tar.gz
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
+  arch-package:
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build Arch package
+        run: |
+          docker run --rm \
+            -v "$PWD:/src" \
+            archlinux:base-devel \
+            bash -euxo pipefail -c '
+              pacman -Syu --noconfirm --needed \
+                cairo gettext gtk3 intltool libtool xcb-util \
+                xorgproto
+              useradd --create-home builder
+              chown -R builder:builder /src
+              su builder -c "cd /src && packaging/arch/build.sh"
+            '
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-package-${{ github.sha }}
+          path: dist/*.pkg.tar.*
+          if-no-files-found: error
+
+  release:
+    needs: [build, arch-package]
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: "*-package*-${{ github.sha }}"
+          path: release-assets
+          merge-multiple: true
+
       - name: Publish GitHub release
-        if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ inputs.release_tag }}" dist/glitterde-*.tar.gz \
+          gh release create "${{ inputs.release_tag }}" release-assets/* \
             --title "glitterDE ${{ inputs.release_tag }}" \
             --generate-notes
