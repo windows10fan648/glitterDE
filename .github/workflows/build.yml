@@ -99,5 +99,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${{ inputs.release_tag }}" release-assets/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "glitterDE ${{ inputs.release_tag }}" \
             --generate-notes
